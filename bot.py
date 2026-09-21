@@ -1,6 +1,6 @@
 """
 Telegram-бот расписания для группы ХТ-344.
-Адаптирован для бесплатного хостинга на Render (Web Service).
+Запуск: python3 bot.py
 """
 
 import asyncio
@@ -13,9 +13,9 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
-from aiohttp import web  # <-- Добавлено для Render
+from aiohttp import web
 
 # ── Загрузка конфигурации ───────────────────────────────
 load_dotenv()
@@ -31,7 +31,7 @@ try:
     GROUP = data["group"]
     print(f"✅ Расписание загружено для группы {GROUP}")
 except Exception as e:
-    print(f"❌ Ошибка загрузки schedule.json: {e}")
+    print(f" Ошибка загрузки schedule.json: {e}")
     exit(1)
 
 DAYS = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
@@ -67,14 +67,14 @@ def parse_date(date_str: str, year: int = None) -> datetime | None:
 
 def format_pair(pair_num: str, pair_data: dict) -> str:
     lines = [f"🔹 <b>{pair_num} пара</b>"]
-    if pair_data.get("subject"): lines.append(f"   📚 {pair_data['subject']}")
+    if pair_data.get("subject"): lines.append(f"    {pair_data['subject']}")
     if pair_data.get("teacher"): lines.append(f"   👨‍🏫 {pair_data['teacher']}")
     if pair_data.get("room"): lines.append(f"   🚪 Ауд. {pair_data['room']}")
     return "\n".join(lines)
 
 def format_day(day_name: str, week_key: str) -> str:
     week_label = get_week_label(week_key)
-    header = f"📅 <b>{day_name}</b> ({week_label})\n"
+    header = f" <b>{day_name}</b> ({week_label})\n"
     if day_name not in SCHEDULE.get(week_key, {}) or not SCHEDULE[week_key][day_name]:
         return header + "\n😴 Нет занятий"
     pairs = SCHEDULE[week_key][day_name]
@@ -99,30 +99,52 @@ def main_keyboard():
         [KeyboardButton(text="На дату")],
     ], resize_keyboard=True)
 
-# ─── Обработчики ────────────────────────────────────────
+# ─── Обработчики команд и кнопок ───────────────────────
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer(f"👋 Привет! Я бот-расписание для группы <b>{GROUP}</b>.\n\n📆 Сейчас: <b>{get_week_label(get_current_week())}</b>\n\nВыберите действие:", reply_markup=main_keyboard(), parse_mode="HTML")
+    await message.answer(
+        f" Привет! Я бот-расписание для группы <b>{GROUP}</b>.\n\n"
+        f"📆 Сейчас: <b>{get_week_label(get_current_week())}</b>\n\n"
+        "Выберите действие:",
+        reply_markup=main_keyboard(),
+        parse_mode="HTML"
+    )
 
-@dp.message(Command("today") | F.text.contains("Сегодня"))
+# Используем два декоратора вместо оператора |
+@dp.message(Command("today"))
+@dp.message(F.text.contains("Сегодня"))
 async def cmd_today(message: types.Message):
     day = get_weekday_name(datetime.now())
-    if day: await message.answer(format_day(day, get_current_week()), parse_mode="HTML")
-    else: await message.answer("🎉 Сегодня воскресенье — выходной!")
+    if day:
+        await message.answer(format_day(day, get_current_week()), parse_mode="HTML")
+    else:
+        await message.answer("🎉 Сегодня воскресенье — выходной!")
 
-@dp.message(Command("tomorrow") | F.text.contains("Завтра"))
+@dp.message(Command("tomorrow"))
+@dp.message(F.text.contains("Завтра"))
 async def cmd_tomorrow(message: types.Message):
-    day = get_weekday_name(datetime.now() + timedelta(days=1))
-    if day: await message.answer(format_day(day, get_week_for_date(datetime.now() + timedelta(days=1))), parse_mode="HTML")
-    else: await message.answer("🎉 Завтра воскресенье — выходной!")
+    tomorrow = datetime.now() + timedelta(days=1)
+    day = get_weekday_name(tomorrow)
+    if day:
+        await message.answer(format_day(day, get_week_for_date(tomorrow)), parse_mode="HTML")
+    else:
+        await message.answer("🎉 Завтра воскресенье — выходной!")
 
-@dp.message(Command("week") | F.text.contains("На неделю"))
+@dp.message(Command("week"))
+@dp.message(F.text.contains("На неделю"))
 async def cmd_week(message: types.Message):
     await message.answer(format_week(get_current_week()), parse_mode="HTML")
 
-@dp.message(Command("day") | F.text.contains("На дату"))
+@dp.message(Command("day"))
+@dp.message(F.text.contains("На дату"))
 async def cmd_day(message: types.Message, state: FSMContext):
-    await message.answer("📅 <b>Введите дату в формате дд.мм</b>\n(например, 22.09 или 22.09.2026)\nИли /cancel для отмены", parse_mode="HTML")
+    await message.answer(
+        "📅 <b>Введите дату в формате дд.мм</b>\n"
+        "(например, 22.09 или 22.09.2026)\n"
+        "Или /cancel для отмены",
+        parse_mode="HTML"
+    )
     await state.set_state(ScheduleStates.waiting_for_date)
 
 @dp.message(Command("cancel"))
@@ -146,22 +168,18 @@ async def process_date(message: types.Message, state: FSMContext):
         await state.clear()
         return
     week = get_week_for_date(dt)
-    await message.answer(f"📅 <b>{day_name}, {dt.strftime('%d.%m.%Y')}</b> ({get_week_label(week)})\n", parse_mode="HTML")
+    await message.answer(
+        f"📅 <b>{day_name}, {dt.strftime('%d.%m.%Y')}</b> ({get_week_label(week)})\n",
+        parse_mode="HTML"
+    )
     await message.answer(format_day(day_name, week), parse_mode="HTML")
     await state.clear()
 
-@dp.callback_query(F.data.startswith("day_"))
-async def cb_day(callback: types.CallbackQuery):
-    day = DAYS[int(callback.data.split("_")[1])]
-    await callback.message.answer(format_day(day, get_current_week()), parse_mode="HTML")
-    await callback.answer()
-
-# ═══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════
 # 🚀 ХАК ДЛЯ RENDER: Запуск веб-сервера + поллинг
 # ═══════════════════════════════════════════════════════
 async def on_startup(app):
     print("🤖 Запускаем Telegram бота (polling)...")
-    # Запускаем поллинг в фоновой задаче, чтобы не блокировать веб-сервер
     asyncio.create_task(dp.start_polling(bot))
 
 async def on_shutdown(app):
@@ -176,7 +194,6 @@ async def main():
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
 
-    # Render автоматически передает порт в переменной окружения PORT
     port = int(os.environ.get("PORT", 8080))
     print(f"🌐 Запуск веб-сервера на порту {port}...")
 
@@ -187,7 +204,6 @@ async def main():
 
     print("✅ Бот успешно запущен и готов к работе!")
 
-    # Бесконечный цикл, чтобы скрипт не завершался
     while True:
         await asyncio.sleep(3600)
 
